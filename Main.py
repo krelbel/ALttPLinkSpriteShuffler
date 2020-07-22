@@ -2,18 +2,28 @@ import logging
 import argparse
 import os
 import random
+from pathlib import Path
+import struct
 
-__version__ = '0.1-dev'
+__version__ = '0.2-dev'
 
-#Shuffles all of the head and/or body sprites in Link's spritesheet in the ALttP 1.0 JP ROM.
+#Shuffles all of the head and/or body sprites in Link's spritesheet in any randomizer or ALttP JP 1.0 ROM
 
 #Can shuffle heads only with other heads (--head), bodies with only other bodies (--body),
 #both heads and bodies but each within their own pool (--head --body), or all head and body
 #sprites shuffled in the same pool (--chaos).
 
+#Can also source randomly from all .zspr sprites in the ./sprites/ subfolder, instead of
+#sourcing from the spritesheet already present in the provided ROM.  Since this loads
+#sprites with the palette they weren't designed with, this will certainly look awful.
+#Use the --multisprite_{simple,full} options if you want a frankensprite.  Simple sources
+#each destination sprite from the same position in a random spritesheet (ignoring the
+#position-altering --head/--body/--chaos args), full sources from random positions in
+#random sprites.  You probably won't be able to tell the difference.  Don't use this.
+
 #Credit goes to Synack for the idea.
 
-#Usage: python Main.py {--head,--body,--chaos} --rom lttpromtobepatched.sfc #generates Spriteshuffled_{head,body,full,chaos}_lttpromtobepatched.sfc
+#Usage: python Main.py {--head,--body,--chaos,--multisprite_simple,--multisprite_full} --rom lttpromtobepatched.sfc #generates {Frankenspriteshuffled,Spriteshuffled}_{head,body,full,chaos}_lttpromtobepatched.sfc
 #General rom patching logic copied from https://github.com/LLCoolDave/ALttPEntranceRandomizer
 
 def write_byte(rom, address, value):
@@ -43,6 +53,43 @@ body_offsets = [
 16*23+0, 16*23+2, 16*23+3, 16*23+4, 16*23+5, 16*23+6, 16*23+7,
 16*24+0, 16*24+1, 16*24+2, 16*24+3, 16*24+4, 16*24+5, 16*25+4]
 
+def shuffle_offsets(args, rom, base_offsets, shuffled_offsets, spritelist, current_sprite):
+    for off in range(len(base_offsets)):
+        if (args.multisprite_simple or args.multisprite_full):
+            foundspr = False
+            while (foundspr is False):
+                srcpath = random.choice(spritelist)
+                srcsheet = srcpath.read_bytes()
+                # Z sprite format: little endian pixel offset stored as 4 byte
+                # integer at byte 9 of .zspr
+                # source: https://docs.google.com/spreadsheets/d/1oNx8IvLcugva0lCqP_VfdalsUppuMiVyFjwBrSGCTiE/edit#gid=0
+                baseoff = struct.unpack_from('<i', srcsheet, 9)[0]
+                #Scan src region, if blank, pick another sprite
+                for tst_h in range(2):
+                    if (args.multisprite_simple):
+                        srcoff = baseoff + base_offsets[off]*0x40 + tst_h*0x200
+                    else:
+                        srcoff = baseoff + shuffled_offsets[off]*0x40 + tst_h*0x200
+                    for tst_w in range(0x40):
+                        if (srcsheet[srcoff+tst_w]):
+                            foundspr = True
+                            break
+
+        else:
+            srcsheet = current_sprite
+            baseoff = 0
+
+        for h in range(2): # All shuffled sprites are 2x2 tiles
+            if (args.multisprite_simple):
+                srcoff = baseoff + base_offsets[off]*0x40 + h*0x200
+            else:
+                srcoff = baseoff + shuffled_offsets[off]*0x40 + h*0x200
+
+            dstoff = 0x80000 + base_offsets[off]*0x40 + h*0x200
+
+            for w in range(0x40):
+                write_byte(rom, dstoff+w, srcsheet[srcoff+w])
+
 def shuffle_sprite(args):
     logger = logging.getLogger('')
 
@@ -50,10 +97,10 @@ def shuffle_sprite(args):
 
     rom = bytearray(open(args.rom, 'rb').read())
 
-    sprite = bytearray(28672)
+    current_sprite = bytearray(28672)
 
     for i in range(28672):
-        sprite[i] = rom[0x80000+i]
+        current_sprite[i] = rom[0x80000+i]
 
     shuffled_head_offsets = head_offsets.copy()
     random.shuffle(shuffled_head_offsets)
@@ -65,33 +112,25 @@ def shuffle_sprite(args):
     shuffled_all_offsets = all_offsets.copy()
     random.shuffle(shuffled_all_offsets)
 
-    height = 2 # All shuffled sprites are 2 tiles high
+    spritelist = list()
+    if (args.multisprite_simple or args.multisprite_full):
+        for path in Path('./sprites/').rglob('*.zspr'):
+            spritelist.append(path)
 
     if (args.head):
-        for off in range(len(head_offsets)):
-            for h in range(height):
-                srcoff = shuffled_head_offsets[off]*0x40 + h*0x200
-                dstoff = 0x80000 + head_offsets[off]*0x40 + h*0x200
-                for w in range(0x40):
-                    write_byte(rom, dstoff+w, sprite[srcoff+w])
+        shuffle_offsets(args, rom, head_offsets, shuffled_head_offsets, spritelist, current_sprite)
 
     if (args.body):
-        for off in range(len(body_offsets)):
-            for h in range(height):
-                srcoff = shuffled_body_offsets[off]*0x40 + h*0x200
-                dstoff = 0x80000 + body_offsets[off]*0x40 + h*0x200
-                for w in range(0x40):
-                    write_byte(rom, dstoff+w, sprite[srcoff+w])
+        shuffle_offsets(args, rom, body_offsets, shuffled_body_offsets, spritelist, current_sprite)
     
     if (args.chaos):
-        for off in range(len(all_offsets)):
-            for h in range(height):
-                srcoff = shuffled_all_offsets[off]*0x40 + h*0x200
-                dstoff = 0x80000 + all_offsets[off]*0x40 + h*0x200
-                for w in range(0x40):
-                    write_byte(rom, dstoff+w, sprite[srcoff+w])
+        shuffle_offsets(args, rom, all_offsets, shuffled_all_offsets, spritelist, current_sprite)
 
-    prefix = "Spriteshuffled"
+    if (args.multisprite_simple or args.multisprite_full):
+        prefix = "Frankenspriteshuffled"
+    else:
+        prefix = "Spriteshuffled"
+
     if (args.chaos):
         prefix += "_chaos"
     elif (args.head and args.body):
@@ -123,6 +162,8 @@ if __name__ == '__main__':
     parser.add_argument('--rom', help='Path to a lttp rom to be patched.')
     parser.add_argument('--head', help='Shuffle head sprites among each other.', action='store_true')
     parser.add_argument('--body', help='Shuffle body sprites among each other.', action='store_true')
+    parser.add_argument('--multisprite_simple', help='Choose each sprite randomly from all spritesheets in sprites/ as sources, instead of the current spritesheet in the provided rom. Keep poses unshuffled (i.e. each sprite will be sourced from the same position in a random sprite).', action='store_true')
+    parser.add_argument('--multisprite_full', help='Choose each sprite randomly from all spritesheets in sprites/ as sources, instead of the current spritesheet in the provided rom. Shuffle poses according to other args (i.e. each sprite will be sourced from a random position in a random spritesheet according to the other --head/--body/--chaos arguments).', action='store_true')
     parser.add_argument('--chaos', help='Shuffle all head/body sprites among each other. This will look weird.', action='store_true')
     args = parser.parse_args()
 

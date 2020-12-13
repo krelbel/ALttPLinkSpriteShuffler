@@ -9,6 +9,9 @@ __version__ = '0.2-dev'
 
 #Shuffles all of the head and/or body sprites in Link's spritesheet in any randomizer or ALttP JP 1.0 ROM
 
+#Can export a patched ROM or a .zspr file (for use on other .zspr sprite loaders, like
+#the http://alttpr.com main site as of v31.0.7) with the --zspr argument.
+
 #Can shuffle heads only with other heads (--head), bodies with only other bodies (--body),
 #both heads and bodies but each within their own pool (--head --body), or all head and body
 #sprites shuffled in the same pool (--chaos).
@@ -23,7 +26,13 @@ __version__ = '0.2-dev'
 
 #Credit goes to Synack for the idea.
 
-#Usage: python Main.py {--head,--body,--chaos,--multisprite_simple,--multisprite_full} --rom lttpromtobepatched.sfc #generates {Frankenspriteshuffled,Spriteshuffled}_{head,body,full,chaos}_lttpromtobepatched.sfc
+#Usage: python Main.py {--head,--body,--chaos,--multisprite_simple,--multisprite_full,--zspr} --rom lttpromtobepatched.sfc #generates {Frankenspriteshuffled,Spriteshuffled}_{head,body,full,chaos}_lttpromtobepatched.sfc
+
+#EASY FIRST USAGE: python Main.py --head --rom lttpromwithsourcespritesheet.sfc --zspr
+#which generates Spriteshuffled_head_lttpromwithsourcespritesheet.zspr, a .zspr file with
+#Link's head sprites shuffled with each other, which can be used on http://alttpr.com by
+#selecting "Load Custom Sprite" after ROM generation.
+
 #General rom patching logic copied from https://github.com/LLCoolDave/ALttPEntranceRandomizer
 
 def write_byte(rom, address, value):
@@ -105,10 +114,92 @@ def shuffle_offsets(args, rom, base_offsets, shuffled_offsets, spritelist, curre
             for w in range(0x40):
                 write_byte(rom, dstoff+w, srcsheet[srcoff+w])
 
+# .zspr file dumping logic copied with permission from SpriteSomething:
+# https://github.com/Artheau/SpriteSomething/blob/master/source/meta/classes/spritelib.py#L443 (thanks miketrethewey!)
+def dump_zspr(rom, outfilename):
+    sprite_sheet = rom[0x80000:0x87000]
+    palettes = rom[0xdd308:0xdd380]
+    # Add glove data
+    palettes.extend(rom[0xdedf5:0xdedf9])
+    HEADER_STRING = b"ZSPR"
+    VERSION = 0x01
+    SPRITE_TYPE = 0x01  # this format has "1" for the player sprite
+    RESERVED_BYTES = b'\x00\x00\x00\x00\x00\x00'
+    QUAD_BYTE_NULL_CHAR = b'\x00\x00\x00\x00'
+    DOUBLE_BYTE_NULL_CHAR = b'\x00\x00'
+    SINGLE_BYTE_NULL_CHAR = b'\x00'
+
+    write_buffer = bytearray()
+
+    write_buffer.extend(HEADER_STRING)
+    write_buffer.extend(struct.pack('B', VERSION)) # as_u8
+    checksum_start = len(write_buffer)
+    write_buffer.extend(QUAD_BYTE_NULL_CHAR) # checksum
+    sprite_sheet_pointer = len(write_buffer)
+    write_buffer.extend(QUAD_BYTE_NULL_CHAR)
+    write_buffer.extend(struct.pack('<H', len(sprite_sheet))) # as_u16
+    palettes_pointer = len(write_buffer)
+    write_buffer.extend(QUAD_BYTE_NULL_CHAR)
+    write_buffer.extend(struct.pack('<H', len(palettes))) # as_u16
+    write_buffer.extend(struct.pack('<H', SPRITE_TYPE)) # as_u16
+    write_buffer.extend(RESERVED_BYTES)
+    # sprite.name
+    write_buffer.extend(outfilename.encode('utf-16-le'))
+    write_buffer.extend(DOUBLE_BYTE_NULL_CHAR)
+    # author.name
+    write_buffer.extend("ALttPLinkSpriteShuffler".encode('utf-16-le'))
+    write_buffer.extend(DOUBLE_BYTE_NULL_CHAR)
+    # author.name-short
+    write_buffer.extend("SpriteShuffler".encode('ascii'))
+    write_buffer.extend(SINGLE_BYTE_NULL_CHAR)
+    write_buffer[sprite_sheet_pointer:sprite_sheet_pointer +
+                 4] = struct.pack('<L', len(write_buffer)) # as_u32
+    write_buffer.extend(sprite_sheet)
+    write_buffer[palettes_pointer:palettes_pointer +
+                 4] = struct.pack('<L', len(write_buffer)) # as_u32
+    write_buffer.extend(palettes)
+
+    checksum = (sum(write_buffer) + 0xFF + 0xFF) % 0x10000
+    checksum_complement = 0xFFFF - checksum
+
+    write_buffer[checksum_start:checksum_start +
+                 2] = struct.pack('<H', checksum) # as_u16
+    write_buffer[checksum_start + 2:checksum_start +
+                 4] = struct.pack('<H', checksum_complement) # as_u16
+
+    with open('%s' % outfilename, "wb") as zspr_file:
+        zspr_file.write(write_buffer)
+
 def shuffle_sprite(args):
     logger = logging.getLogger('')
 
-    logger.info('Patching ROM.')
+    if (args.multisprite_simple or args.multisprite_full):
+        prefix = "Frankenspriteshuffled"
+    else:
+        prefix = "Spriteshuffled"
+
+    if (args.chaos):
+        prefix += "_chaos"
+    elif (args.head and args.body):
+        prefix += "_full"
+    elif (args.head):
+        prefix += "_head"
+    elif (args.body):
+        prefix += "_body"
+    else:
+        logger.info('error, no shuffle specified')
+        return
+
+    if (args.zspr):
+        origromname = os.path.basename(args.rom)
+        shortname = os.path.splitext(origromname)[0]
+        outfilename = '%s_%s.zspr' % (prefix, shortname)
+
+        logger.info("Creating .zspr file: " + outfilename)
+    else:
+        outfilename = '%s_%s' % (prefix, os.path.basename(args.rom))
+
+        logger.info("Creating patched ROM: " + outfilename)
 
     rom = bytearray(open(args.rom, 'rb').read())
 
@@ -141,27 +232,11 @@ def shuffle_sprite(args):
     if (args.chaos):
         shuffle_offsets(args, rom, all_offsets, shuffled_all_offsets, spritelist, current_sprite)
 
-    if (args.multisprite_simple or args.multisprite_full):
-        prefix = "Frankenspriteshuffled"
+    if (args.zspr):
+        dump_zspr(rom, outfilename)
     else:
-        prefix = "Spriteshuffled"
-
-    if (args.chaos):
-        prefix += "_chaos"
-    elif (args.head and args.body):
-        prefix += "_full"
-    elif (args.head):
-        prefix += "_head"
-    elif (args.body):
-        prefix += "_body"
-    else:
-        logger.info('error, no shuffle specified')
-        return
-
-    outfilename = '%s_%s' % (prefix, os.path.basename(args.rom))
-
-    with open('%s' % outfilename, 'wb') as outfile:
-        outfile.write(rom)
+        with open('%s' % outfilename, 'wb') as outfile:
+            outfile.write(rom)
 
     logger.info('Done.')
 
@@ -174,7 +249,8 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--loglevel', default='info', const='info', nargs='?', choices=['error', 'info', 'warning', 'debug'], help='Select level of logging for output.')
-    parser.add_argument('--rom', help='Path to a lttp rom to be patched.')
+    parser.add_argument('--rom', help='Path to a lttp rom to use as the base spritesheet.')
+    parser.add_argument('--zspr', help='Output a .zspr instead of a patched rom, convenient for use in other sprite loaders (like the one on alttpr.com)', action='store_true')
     parser.add_argument('--head', help='Shuffle head sprites among each other.', action='store_true')
     parser.add_argument('--body', help='Shuffle body sprites among each other.', action='store_true')
     parser.add_argument('--multisprite_simple', help='Choose each sprite randomly from all spritesheets in sprites/ as sources, instead of the current spritesheet in the provided rom. Keep poses unshuffled (i.e. each sprite will be sourced from the same position in a random sprite).', action='store_true')

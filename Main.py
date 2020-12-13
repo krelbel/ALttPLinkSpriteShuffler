@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 import shutil
 import struct
 
-__version__ = '0.3-dev'
+__version__ = '0.3'
 
 #Shuffles all of the head and/or body sprites in Link's spritesheet in any randomizer or ALttP JP 1.0 ROM
 
@@ -56,14 +56,23 @@ def write_byte(rom, address, value):
 # look bad, and heaven forbid a frankensprite looks bad.
 # Source of used/unused offsets:
 # https://docs.google.com/document/d/11F14QINktk7f3reGsibIQxp2WRP63j6EYdS3svlliQA/edit
-head_offsets = [0, 1, 2, 3, 4, 5, 6, 7,
-16*1+7,
-16*4+2, 16*4+3, 16*4+4, 16*4+7,
-16*10+3, 16*10+4,
-16*11+5, 16*11+6, 16*11+7,
-16*20+0, 16*20+1, 16*20+2,
-16*23+1,
-16*25+0, 16*25+2, 16*25+3]
+UP = 0
+RIGHT = 1
+DOWN = 2
+
+# Offset: facing dict, used to keep walk cycle with consistent facing
+head_offsets = { # Row from spritesheet commented at the end
+        0: RIGHT, 1: DOWN, 2: UP, 3: DOWN, 4: DOWN, 5: DOWN, 6: DOWN, 7: DOWN, # A0-7
+        16*1+7: DOWN,                                                          # B7
+        16*4+2: RIGHT, 16*4+3: DOWN, 16*4+4: UP, 16*4+7: UP,                   # E2, 3, 4, 7
+        16*10+3: RIGHT, 16*10+4: RIGHT,                                        # K3, 4
+        16*11+5: DOWN, 16*11+6: RIGHT, 16*11+7: UP,                            # L5-7
+        16*20+0: DOWN, 16*20+1: RIGHT, 16*20+2: UP,                            # U0-2
+        16*23+1: UP,                                                           # X1
+        16*25+0: UP, 16*25+2: DOWN, 16*25+3: RIGHT                             # Z0, 2, 3
+}
+
+walk_head_offsets = [0, 16*10+3, 16*10+4]
 
 body_offsets = [
 16*1+0, 16*1+1, 16*1+2, 16*1+3, 16*1+4, 16*1+5, 16*1+6,
@@ -217,13 +226,45 @@ def shuffle_sprite(args):
     for i in range(28672):
         current_sprite[i] = rom[0x80000+i]
 
-    shuffled_head_offsets = head_offsets.copy()
+    head_offsets_list = list(head_offsets.keys())
+    shuffled_head_offsets = head_offsets_list.copy()
     random.shuffle(shuffled_head_offsets)
+
+    # Link's walk cycle uses heads A0, K3, and K4 changing every couple frames;
+    # if these are swapped with any random head facing any random direction,
+    # the result is usually gibberish.  To make this look a bit nicer, this
+    # code picks a random direction, then ensures all 3 frames of Link's
+    # left/right head walk cycle are facing the same direction.
+    #
+    # See https://github.com/krelbel/ALttPLinkSpriteShuffler/issues/1
+    nonwalk_head_offsets = [i for i in head_offsets_list if i not in walk_head_offsets]
+    random_facing = random.randint(0,2)
+
+    for walk_head_offset in walk_head_offsets:
+        off = head_offsets_list.index(walk_head_offset)
+        shuffled_pose = shuffled_head_offsets[off]
+
+        if head_offsets[shuffled_pose] != random_facing:
+            # Exchange this element in shuffled_head_offsets that will end
+            # up at this frame of the walking animation with one facing the
+            # consistent direction
+
+            while True:
+                swap_pose = random.choice(nonwalk_head_offsets)
+                swap_off = head_offsets_list.index(swap_pose)
+                shuffled_swap_pose = shuffled_head_offsets[swap_off]
+                if head_offsets[shuffled_swap_pose] == random_facing:
+                    tmp = shuffled_head_offsets[off]
+                    shuffled_head_offsets[off] = shuffled_head_offsets[swap_off]
+                    shuffled_head_offsets[swap_off] = tmp
+                    break
+
+        shuffled_pose = shuffled_head_offsets[off]
 
     shuffled_body_offsets = body_offsets.copy()
     random.shuffle(shuffled_body_offsets)
 
-    all_offsets = head_offsets + body_offsets
+    all_offsets = head_offsets_list + body_offsets
     shuffled_all_offsets = all_offsets.copy()
     random.shuffle(shuffled_all_offsets)
 
@@ -233,7 +274,7 @@ def shuffle_sprite(args):
             spritelist.append(path)
 
     if (args.head):
-        shuffle_offsets(args, rom, head_offsets, shuffled_head_offsets, spritelist, current_sprite)
+        shuffle_offsets(args, rom, head_offsets_list, shuffled_head_offsets, spritelist, current_sprite)
 
     if (args.body):
         shuffle_offsets(args, rom, body_offsets, shuffled_body_offsets, spritelist, current_sprite)

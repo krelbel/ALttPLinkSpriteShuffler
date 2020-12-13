@@ -3,9 +3,14 @@ import argparse
 import os
 import random
 from pathlib import Path
+from urllib.request import urlopen
+import json
+from glob import glob
+from urllib.parse import urlparse
+import shutil
 import struct
 
-__version__ = '0.2-dev'
+__version__ = '0.3-dev'
 
 #Shuffles all of the head and/or body sprites in Link's spritesheet in any randomizer or ALttP JP 1.0 ROM
 
@@ -24,12 +29,16 @@ __version__ = '0.2-dev'
 #position-altering --head/--body/--chaos args), full sources from random positions in
 #random sprites.  You probably won't be able to tell the difference.  Don't use this.
 
+#Sprites are no longer distributed with this script; use the --dumpsprites option to
+#update ./sprites/alttpr/ with the latest sprites from https://alttpr.com/sprites
+#for use with the --multisprite options.
+
 #Credit goes to Synack for the idea.
 
-#Usage: python Main.py {--head,--body,--chaos,--multisprite_simple,--multisprite_full,--zspr} --rom lttpromtobepatched.sfc #generates {Frankenspriteshuffled,Spriteshuffled}_{head,body,full,chaos}_lttpromtobepatched.sfc
+#Usage: `python Main.py {--head,--body,--chaos,--multisprite_simple,--multisprite_full,--zspr} --rom lttpromtobepatched.sfc #generates {Frankenspriteshuffled,Spriteshuffled}_{head,body,full,chaos}_lttpromtobepatched.sfc`
 
-#EASY FIRST USAGE: python Main.py --head --rom lttpromwithsourcespritesheet.sfc --zspr
-#which generates Spriteshuffled_head_lttpromwithsourcespritesheet.zspr, a .zspr file with
+#EASY FIRST USAGE: `python Main.py --head --rom lttpromwithsourcespritesheet.sfc --zspr`
+#which generates `Spriteshuffled_head_lttpromwithsourcespritesheet.zspr`, a .zspr file with
 #Link's head sprites shuffled with each other, which can be used on http://alttpr.com by
 #selecting "Load Custom Sprite" after ROM generation.
 
@@ -242,9 +251,70 @@ def shuffle_sprite(args):
 
     return
 
-def main(args):
-    shuffle_sprite(args)
+# Sprite dumping logic copied from
+# https://github.com/Berserker66/MultiWorld-Utilities/blob/doors/source/classes/SpriteSelector.py
+def dump_sprites(args):
+    logger = logging.getLogger('')
+    alttpr_sprite_dir = "./sprites/alttpr"
+    successful = True
+
+    if not os.path.isdir(alttpr_sprite_dir):
+        os.makedirs(alttpr_sprite_dir)
+
+    try:
+        logger.info("Downloading alttpr sprites list")
+        with urlopen('https://alttpr.com/sprites') as response:
+            sprites_arr = json.loads(response.read().decode("utf-8"))
+    except Exception as e:
+        logger.info("Error getting list of alttpr sprites. Sprites not updated.\n\n%s: %s" % (type(e).__name__, e))
+        successful = False
+        return
+ 
+    try:
+        logger.info("Determining needed sprites")
+        current_sprites = [os.path.basename(file) for file in glob(os.path.join(alttpr_sprite_dir,"*"))]
+        alttpr_sprites = [(sprite['file'], os.path.basename(urlparse(sprite['file']).path)) for sprite in sprites_arr]
+        needed_sprites = [(sprite_url, filename) for (sprite_url, filename) in alttpr_sprites if filename not in current_sprites]
+ 
+        alttpr_filenames = [filename for (_, filename) in alttpr_sprites]
+        obsolete_sprites = [sprite for sprite in current_sprites if sprite not in alttpr_filenames]
+    except Exception as e:
+        logger.info("Error Determining which sprites to update. Sprites not updated.\n\n%s: %s" % (type(e).__name__, e))
+        successful = False
+        return
+ 
+    updated = 0
+    for (sprite_url, filename) in needed_sprites:
+        try:
+            logger.info("Downloading needed sprite %g/%g" % (updated + 1, len(needed_sprites)))
+            target = os.path.join(alttpr_sprite_dir, filename)
+            with urlopen(sprite_url) as response, open(target, 'wb') as out:
+                shutil.copyfileobj(response, out)
+        except Exception as e:
+            logger.info("Error downloading sprite. Not all sprites updated.\n\n%s: %s" % (type(e).__name__, e))
+            successful = False
+        updated += 1
+ 
+    deleted = 0
+    for sprite in obsolete_sprites:
+        try:
+            logger.info("Removing obsolete sprite %g/%g" % (deleted + 1, len(obsolete_sprites)))
+            os.remove(os.path.join(self.alttpr_sprite_dir, sprite))
+        except Exception as e:
+            logger.info("Error removing obsolete sprite. Not all sprites updated.\n\n%s: %s" % (type(e).__name__, e))
+            successful = False
+        deleted += 1
+
+    if successful:
+        resultmessage = "alttpr sprites updated successfully"
+
     return
+
+def main(args):
+    if args.dumpsprites:
+        dump_sprites(args)
+    else:
+        shuffle_sprite(args)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -256,17 +326,19 @@ if __name__ == '__main__':
     parser.add_argument('--multisprite_simple', help='Choose each sprite randomly from all spritesheets in sprites/ as sources, instead of the current spritesheet in the provided rom. Keep poses unshuffled (i.e. each sprite will be sourced from the same position in a random sprite).', action='store_true')
     parser.add_argument('--multisprite_full', help='Choose each sprite randomly from all spritesheets in sprites/ as sources, instead of the current spritesheet in the provided rom. Shuffle poses according to other args (i.e. each sprite will be sourced from a random position in a random spritesheet according to the other --head/--body/--chaos arguments).', action='store_true')
     parser.add_argument('--chaos', help='Shuffle all head/body sprites among each other. This will look weird.', action='store_true')
+    parser.add_argument('--dumpsprites', help='Update ./sprites/alttpr/ with the latest sprites from https://alttpr.com/sprites for use with the --multisprite options.', action='store_true')
     args = parser.parse_args()
 
-    if args.rom is None:
-        input('No rom specified. Please run with -h to see help for further information. \nPress Enter to exit.')
-        exit(1)
-    if ((args.head != True) and (args.body != True) and (args.chaos != True)):
-        input('No shuffle specified. Please run with -h to see help for further information. \nPress Enter to exit.')
-        exit(1)
-    if not os.path.isfile(args.rom):
-        input('Could not find valid rom for patching at path %s. Please run with -h to see help for further information. \nPress Enter to exit.' % args.rom)
-        exit(1)
+    if not args.dumpsprites:
+        if args.rom is None:
+            input('No rom specified. Please run with -h to see help for further information. \nPress Enter to exit.')
+            exit(1)
+        if ((args.head != True) and (args.body != True) and (args.chaos != True)):
+            input('No shuffle specified. Please run with -h to see help for further information. \nPress Enter to exit.')
+            exit(1)
+        if not os.path.isfile(args.rom):
+            input('Could not find valid rom for patching at path %s. Please run with -h to see help for further information. \nPress Enter to exit.' % args.rom)
+            exit(1)
 
     # set up logger
     loglevel = {'error': logging.ERROR, 'info': logging.INFO, 'warning': logging.WARNING, 'debug': logging.DEBUG}[args.loglevel]

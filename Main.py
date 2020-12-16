@@ -10,39 +10,74 @@ from urllib.parse import urlparse
 import shutil
 import struct
 
-__version__ = '0.3'
+__version__ = '0.4'
 
-#Shuffles all of the head and/or body sprites in Link's spritesheet in any randomizer or ALttP JP 1.0 ROM
+# Shuffles all of the head, body, and/or bunny sprites in Link's spritesheet in
+# any randomizer or ALttP JP 1.0 ROM
+#
+# **EASY FIRST USAGE**:
+# `python Main.py --rom sourcerom.sfc --head --zspr` which generates
+# `Spriteshuffled_head_sourcerom.zspr`, a .zspr file with Link's head sprites
+# shuffled with each other, which can be used on http://alttpr.com by selecting
+# "Load Custom Sprite", the last entry in the sprite chooser after ROM
+# generation.
+#
+# **EASY BUNNY-ONLY USAGE**:
+# `python Main.py --dumpsprites --rom sourcerom.sfc --multibunny --zspr`
+# to update ./sprites/alttpr/ with the latest sprites from
+# https://alttpr.com/sprites for use with bunny shuffle or multisprite shuffle
+# (only need to do this once, takes a while the first time, but re-checking
+# is fast and the --dumpsprites option isn't required after the first time)
+# to generate `Spriteshuffled_bunny_sourcerom.zspr`, a .zspr
+# file with the Link sprite unchanged, but bunny sprite and bunny palette
+# swapped out for the bunny sprite/palette from a random .zspr file in the
+# ./sprites/ folder.  Can combine this with other sprite shuffle options.
+#
+# Credit goes to Synack for the idea.
+#
+# DETAILED OPTIONS:
+#
+# 1) **--rom**: The randomizer or ALttP JP 1.0 ROM containing the source
+#    spritesheet for the shuffler.
+#
+# 2) **--zspr**: Instead of generating a patched rom (like
+#    `Spriteshuffled_head_rom.sfc`), generate a Z Sprite (.zspr) file (like
+#    `Spriteshuffled_head_rom.zspr`) for use on other .zspr sprite loaders,
+#    like the http://alttpr.com main site as of v31.0.7.
+#
+# 3) **--head**: Shuffle heads with other heads
+#
+# 4) **--body**: Shuffle bodies with other bodies
+#
+# 5) **--head --body**: Shuffle heads and bodies within their own pools, but
+#    don't exchange heads with bodies
+#
+# 6) **--chaos**: Shuffle all heads and bodies in the same pool.  Overrides
+#    --head/--body
+#
+# 7) **--dumpsprites**: Download all the latest sprites from
+#    https://alttpr.com/sprites into the ./sprites/alttpr/ subfolder; this may
+#    take a while, but only needs to be done once.  Skips sprites that have
+#    been downloaded before.  The ./sprites/ folder must contain .zspr files
+#    for use in all the options below.
+#
+# 8) **--multibunny**: Replace the bunny sprite/palette with a bunny
+#    sprite/palette from a random .zspr spritesheet in the ./sprites/ folder.
+#    Bunny heads/bodies aren't scrambled, because you wouldn't want to hurt
+#    the poor bunny, would you?
+#
+# 9) **--multisprite_simple**: When generating the shuffled spritesheet,
+#    instead of sourcing exclusively from the sprite in the provided --rom,
+#    source each head and/or body sprite from the equivalent position within
+#    a random .zspr spritesheet in the ./sprites/ folder.  Since this loads
+#    sprites with the palette they weren't designed with, this usually looks
+#    awful.
+#
+# 10) **--multisprite_full**: Same as --multisprite_simple, except each
+#     destination sprite 2x2 tile is shuffled from a random 2x2 tile within a
+#     random .zspr spritesheet.  Combine with --chaos for maximum nonsense.
 
-#Can export a patched ROM or a .zspr file (for use on other .zspr sprite loaders, like
-#the http://alttpr.com main site as of v31.0.7) with the --zspr argument.
-
-#Can shuffle heads only with other heads (--head), bodies with only other bodies (--body),
-#both heads and bodies but each within their own pool (--head --body), or all head and body
-#sprites shuffled in the same pool (--chaos).
-
-#Can also source randomly from all .zspr sprites in the ./sprites/ subfolder, instead of
-#sourcing from the spritesheet already present in the provided ROM.  Since this loads
-#sprites with the palette they weren't designed with, this will certainly look awful.
-#Use the --multisprite_{simple,full} options if you want a frankensprite.  Simple sources
-#each destination sprite from the same position in a random spritesheet (ignoring the
-#position-altering --head/--body/--chaos args), full sources from random positions in
-#random sprites.  You probably won't be able to tell the difference.  Don't use this.
-
-#Sprites are no longer distributed with this script; use the --dumpsprites option to
-#update ./sprites/alttpr/ with the latest sprites from https://alttpr.com/sprites
-#for use with the --multisprite options.
-
-#Credit goes to Synack for the idea.
-
-#Usage: `python Main.py {--head,--body,--chaos,--multisprite_simple,--multisprite_full,--zspr} --rom lttpromtobepatched.sfc #generates {Frankenspriteshuffled,Spriteshuffled}_{head,body,full,chaos}_lttpromtobepatched.sfc`
-
-#EASY FIRST USAGE: `python Main.py --head --rom lttpromwithsourcespritesheet.sfc --zspr`
-#which generates `Spriteshuffled_head_lttpromwithsourcespritesheet.zspr`, a .zspr file with
-#Link's head sprites shuffled with each other, which can be used on http://alttpr.com by
-#selecting "Load Custom Sprite" after ROM generation.
-
-#General rom patching logic copied from https://github.com/LLCoolDave/ALttPEntranceRandomizer
+# General rom patching logic copied from https://github.com/LLCoolDave/ALttPEntranceRandomizer
 
 def write_byte(rom, address, value):
     rom[address] = value
@@ -75,48 +110,72 @@ head_offsets = { # Row from spritesheet commented at the end
 walk_head_offsets = [0, 16*10+3, 16*10+4]
 
 body_offsets = [
-16*1+0, 16*1+1, 16*1+2, 16*1+3, 16*1+4, 16*1+5, 16*1+6,
-16*2+0, 16*2+1, 16*2+2, 16*2+3, 16*2+4, 16*2+5, 16*2+6, 16*2+7,
-16*3+0, 16*3+1, 16*3+2, 16*3+3, 16*3+4, 16*3+7,
-16*5+5, 16*5+6, 16*5+7,
-16*6+7,
-16*8+0, 16*8+1, 16*8+2,
-16*11+3, 16*11+4, 
-16*12+0, 16*12+1, 16*12+2, 16*12+3, 16*12+4, 16*12+5, 16*12+6, 16*12+7,
-16*13+0, 16*13+1, 16*13+2, 16*13+3, 16*13+4, 16*13+5, 16*13+6, 16*13+7,
-16*14+0, 16*14+1, 16*14+2, 16*14+3, 16*14+4, 16*14+5, 16*14+6, 16*14+7,
-16*15+1, 16*15+2, 16*15+3, 16*15+4, 16*15+5, 16*15+6, 16*15+7,
-16*16+0, 16*16+1, 16*16+5, 16*16+6, 16*16+7,
-16*17+6, 16*17+7,
-16*18+3, 16*18+4, 16*18+5, 16*18+6, 16*18+7,
-16*19+3, 16*19+4, 16*19+5, 16*19+6, 16*19+7,
-16*20+4, 16*20+5, 16*20+6, 16*20+7,
-16*21+0, 16*21+1, 16*21+2, 16*21+3, 16*21+4, 16*21+5, 16*21+6,
-16*23+2, 16*23+3, 16*23+4, 16*23+5, 16*23+6, 16*23+7,
-16*24+0, 16*24+1, 16*24+2, 16*24+3, 16*24+4, 16*24+5, 16*25+4]
+16*1+0, 16*1+1, 16*1+2, 16*1+3, 16*1+4, 16*1+5, 16*1+6,                 # B0-6
+16*2+0, 16*2+1, 16*2+2, 16*2+3, 16*2+4, 16*2+5, 16*2+6, 16*2+7,         # C0-7
+16*3+0, 16*3+1, 16*3+2, 16*3+3, 16*3+4, 16*3+7,                         # D0-4, 7
+16*5+5, 16*5+6, 16*5+7,                                                 # F5-7
+16*6+7,                                                                 # G7
+16*8+0, 16*8+1, 16*8+2,                                                 # I0-2
+16*11+3, 16*11+4,                                                       # L3-4
+16*12+0, 16*12+1, 16*12+2, 16*12+3, 16*12+4, 16*12+5, 16*12+6, 16*12+7, # M0-7
+16*13+0, 16*13+1, 16*13+2, 16*13+3, 16*13+4, 16*13+5, 16*13+6, 16*13+7, # N0-7
+16*14+0, 16*14+1, 16*14+2, 16*14+3, 16*14+4, 16*14+5, 16*14+6, 16*14+7, # O0-7
+16*15+1, 16*15+2, 16*15+3, 16*15+4, 16*15+5, 16*15+6, 16*15+7,          # P1-7
+16*16+0, 16*16+1, 16*16+5, 16*16+6, 16*16+7,                            # Q0-1, 5-7
+16*17+6, 16*17+7,                                                       # R6-7
+16*18+3, 16*18+4, 16*18+5, 16*18+6, 16*18+7,                            # S3-7
+16*19+3, 16*19+4, 16*19+5, 16*19+6, 16*19+7,                            # T3-7
+16*20+4, 16*20+5, 16*20+6, 16*20+7,                                     # U4-7
+16*21+0, 16*21+1, 16*21+2, 16*21+3, 16*21+4, 16*21+5, 16*21+6,          # V0-6
+16*23+2, 16*23+3, 16*23+4, 16*23+5, 16*23+6, 16*23+7,                   # X2-7
+16*24+0, 16*24+1, 16*24+2, 16*24+3, 16*24+4, 16*24+5,                   # Y0-5
+16*25+4]                                                                # Z4
+
+bunny_offsets = [
+16*25+5, 16*25+7,                                              # Z5, Z7
+16*26+0, 16*26+1, 16*26+2, 16*26+3, 16*26+4, 16*26+5, 16*26+6] # AA0-6
+
+def pick_random_zspr(scan_offset, spritelist):
+    basespriteoffset = 0
+    basepaletteoffset = 0
+    srcsheet = []
+
+    if not spritelist:
+        logger.info("ERROR: couldn't find sprite for shuffling, make sure you've run --dumpsprites first.")
+        return
+
+    # Pick a random sprite, but make sure it has sprite data at the chosen
+    # offset first (don't want the shuffled spritesheet to pick from the head
+    # region of body-only sprites or vice versa, since that's boring.)
+    foundspr = False
+    while foundspr is False:
+        srcpath = random.choice(spritelist)
+        srcsheet = srcpath.read_bytes()
+        basespriteoffset = struct.unpack_from('<i', srcsheet, 9)[0]
+        basepaletteoffset = struct.unpack_from('<i', srcsheet, 15)[0]
+        if (basespriteoffset == 0 or
+            basepaletteoffset == 0 or
+            basespriteoffset + 0x7000 > basepaletteoffset or
+            basespriteoffset + 0x7000 > len(srcsheet) or
+            basepaletteoffset + 124 > len(srcsheet)):
+            logger.info("WARNING: skipping corrupted sprite " + str(srcpath))
+        else:
+            for tst_h in range(2):
+                srcoff = basespriteoffset + scan_offset*0x40 + tst_h*0x200
+                for tst_w in range(0x40):
+                    if srcsheet[srcoff + tst_w]:
+                        foundspr = True
+                        break
+
+    return srcsheet, basespriteoffset, basepaletteoffset
 
 def shuffle_offsets(args, rom, base_offsets, shuffled_offsets, spritelist, current_sprite):
     for off in range(len(base_offsets)):
         if (args.multisprite_simple or args.multisprite_full):
-            foundspr = False
-            while (foundspr is False):
-                srcpath = random.choice(spritelist)
-                srcsheet = srcpath.read_bytes()
-                # Z sprite format: little endian pixel offset stored as 4 byte
-                # integer at byte 9 of .zspr
-                # source: https://docs.google.com/spreadsheets/d/1oNx8IvLcugva0lCqP_VfdalsUppuMiVyFjwBrSGCTiE/edit#gid=0
-                baseoff = struct.unpack_from('<i', srcsheet, 9)[0]
-                #Scan src region, if blank, pick another sprite
-                for tst_h in range(2):
-                    if (args.multisprite_simple):
-                        srcoff = baseoff + base_offsets[off]*0x40 + tst_h*0x200
-                    else:
-                        srcoff = baseoff + shuffled_offsets[off]*0x40 + tst_h*0x200
-                    for tst_w in range(0x40):
-                        if (srcsheet[srcoff+tst_w]):
-                            foundspr = True
-                            break
-
+            if (args.multisprite_simple):
+                srcsheet, baseoff, paloff = pick_random_zspr(base_offsets[off], spritelist)
+            else:
+                srcsheet, baseoff, paloff = pick_random_zspr(shuffled_offsets[off], spritelist)
         else:
             srcsheet = current_sprite
             baseoff = 0
@@ -188,43 +247,10 @@ def dump_zspr(rom, outfilename):
     with open('%s' % outfilename, "wb") as zspr_file:
         zspr_file.write(write_buffer)
 
-def shuffle_sprite(args):
+def shuffle_link(args, rom, spritelist):
     logger = logging.getLogger('')
 
-    if (args.multisprite_simple or args.multisprite_full):
-        prefix = "Frankenspriteshuffled"
-    else:
-        prefix = "Spriteshuffled"
-
-    if (args.chaos):
-        prefix += "_chaos"
-    elif (args.head and args.body):
-        prefix += "_full"
-    elif (args.head):
-        prefix += "_head"
-    elif (args.body):
-        prefix += "_body"
-    else:
-        logger.info('error, no shuffle specified')
-        return
-
-    if (args.zspr):
-        origromname = os.path.basename(args.rom)
-        shortname = os.path.splitext(origromname)[0]
-        outfilename = '%s_%s.zspr' % (prefix, shortname)
-
-        logger.info("Creating .zspr file: " + outfilename)
-    else:
-        outfilename = '%s_%s' % (prefix, os.path.basename(args.rom))
-
-        logger.info("Creating patched ROM: " + outfilename)
-
-    rom = bytearray(open(args.rom, 'rb').read())
-
-    current_sprite = bytearray(28672)
-
-    for i in range(28672):
-        current_sprite[i] = rom[0x80000+i]
+    current_sprite = rom[0x80000:0x87000]
 
     head_offsets_list = list(head_offsets.keys())
     shuffled_head_offsets = head_offsets_list.copy()
@@ -268,11 +294,6 @@ def shuffle_sprite(args):
     shuffled_all_offsets = all_offsets.copy()
     random.shuffle(shuffled_all_offsets)
 
-    spritelist = list()
-    if (args.multisprite_simple or args.multisprite_full):
-        for path in Path('./sprites/').rglob('*.zspr'):
-            spritelist.append(path)
-
     if (args.head):
         shuffle_offsets(args, rom, head_offsets_list, shuffled_head_offsets, spritelist, current_sprite)
 
@@ -282,15 +303,86 @@ def shuffle_sprite(args):
     if (args.chaos):
         shuffle_offsets(args, rom, all_offsets, shuffled_all_offsets, spritelist, current_sprite)
 
+def shuffle_bunny(args, rom, spritelist):
+    logger = logging.getLogger('')
+
+    # Pick a random sprite, but make sure it has a non-transparent bunny sprite
+    # first (just checking bunny head Z5 for nonzero pixel data here)
+    srcsheet, basespriteoffset, basepaletteoffset = pick_random_zspr(bunny_offsets[0], spritelist)
+    
+    for off in bunny_offsets:
+        for h in range(2): # All bunny sprites consist of 2x2 tiles
+            byteoffset = off*0x40 + h*0x200
+            srcoff = basespriteoffset + byteoffset
+            dstoff = 0x80000 + byteoffset
+            for w in range(0x40):
+                write_byte(rom, dstoff+w, srcsheet[srcoff+w])
+
+    # Copy bunny palette; palettes are 4 sets of 30 bytes (green, blue, red, bunny) +
+    # 4 bytes for gloves, so grab bytes 90-119 of the palette block from the source
+    # .zspr file
+    dstpaletteoffset = 0xdd308 + 30*3
+    srcpaletteoffset = basepaletteoffset + 30*3
+    for b in range(30):
+        write_byte(rom, dstpaletteoffset+b, srcsheet[srcpaletteoffset+b])
+
+def shuffle_sprite(args):
+    logger = logging.getLogger('')
+
+    if (args.multisprite_simple or args.multisprite_full):
+        prefix = "Frankenspriteshuffled"
+    else:
+        prefix = "Spriteshuffled"
+
+    if (args.chaos):
+        prefix += "_chaos"
+    elif (args.head and args.body):
+        prefix += "_full"
+    elif (args.head):
+        prefix += "_head"
+    elif (args.body):
+        prefix += "_body"
+    elif not args.multibunny:
+        logger.info('error, no shuffle specified')
+        return
+
+    if (args.multibunny):
+        prefix += "_bunny"
+
+    if (args.zspr):
+        origromname = os.path.basename(args.rom)
+        shortname = os.path.splitext(origromname)[0]
+        outfilename = '%s_%s.zspr' % (prefix, shortname)
+
+        logger.info("Creating .zspr file: " + outfilename)
+    else:
+        outfilename = '%s_%s' % (prefix, os.path.basename(args.rom))
+
+        logger.info("Creating patched ROM: " + outfilename)
+
+    rom = bytearray(open(args.rom, 'rb').read())
+
+    #current_sprite = bytearray(28672)
+
+    #for i in range(28672):
+    #    current_sprite[i] = rom[0x80000+i]
+
+    spritelist = list()
+    if (args.multisprite_simple or args.multisprite_full or args.multibunny):
+        for path in Path('./sprites/').rglob('*.zspr'):
+            spritelist.append(path)
+
+    shuffle_link(args, rom, spritelist)
+
+    if (args.multibunny):
+        shuffle_bunny(args, rom, spritelist)
+
     if (args.zspr):
         dump_zspr(rom, outfilename)
     else:
         with open('%s' % outfilename, 'wb') as outfile:
             outfile.write(rom)
 
-    logger.info('Done.')
-
-    return
 
 # Sprite dumping logic copied from
 # https://github.com/Berserker66/MultiWorld-Utilities/blob/doors/source/classes/SpriteSelector.py
@@ -354,8 +446,8 @@ def dump_sprites(args):
 def main(args):
     if args.dumpsprites:
         dump_sprites(args)
-    else:
-        shuffle_sprite(args)
+
+    shuffle_sprite(args)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -364,17 +456,18 @@ if __name__ == '__main__':
     parser.add_argument('--zspr', help='Output a .zspr instead of a patched rom, convenient for use in other sprite loaders (like the one on alttpr.com)', action='store_true')
     parser.add_argument('--head', help='Shuffle head sprites among each other.', action='store_true')
     parser.add_argument('--body', help='Shuffle body sprites among each other.', action='store_true')
-    parser.add_argument('--multisprite_simple', help='Choose each sprite randomly from all spritesheets in sprites/ as sources, instead of the current spritesheet in the provided rom. Keep poses unshuffled (i.e. each sprite will be sourced from the same position in a random sprite).', action='store_true')
-    parser.add_argument('--multisprite_full', help='Choose each sprite randomly from all spritesheets in sprites/ as sources, instead of the current spritesheet in the provided rom. Shuffle poses according to other args (i.e. each sprite will be sourced from a random position in a random spritesheet according to the other --head/--body/--chaos arguments).', action='store_true')
     parser.add_argument('--chaos', help='Shuffle all head/body sprites among each other. This will look weird.', action='store_true')
     parser.add_argument('--dumpsprites', help='Update ./sprites/alttpr/ with the latest sprites from https://alttpr.com/sprites for use with the --multisprite options.', action='store_true')
+    parser.add_argument('--multibunny', help='Pick a random bunny sprite from all bunny sprites in ./sprites/ instead of the bunny sprite in the base spritesheet.', action='store_true')
+    parser.add_argument('--multisprite_simple', help='Choose each sprite randomly from all spritesheets in ./sprites/ as sources, instead of the current spritesheet in the provided rom. Keep poses unshuffled (i.e. each sprite will be sourced from the same position in a random sprite).', action='store_true')
+    parser.add_argument('--multisprite_full', help='Choose each sprite randomly from all spritesheets in ./sprites/ as sources, instead of the current spritesheet in the provided rom. Shuffle poses according to other args (i.e. each sprite will be sourced from a random position in a random spritesheet according to the other --head/--body/--chaos arguments).', action='store_true')
     args = parser.parse_args()
 
     if not args.dumpsprites:
         if args.rom is None:
             input('No rom specified. Please run with -h to see help for further information. \nPress Enter to exit.')
             exit(1)
-        if ((args.head != True) and (args.body != True) and (args.chaos != True)):
+        if ((args.head != True) and (args.body != True) and (args.chaos != True) and (args.multibunny != True)):
             input('No shuffle specified. Please run with -h to see help for further information. \nPress Enter to exit.')
             exit(1)
         if not os.path.isfile(args.rom):

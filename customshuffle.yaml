@@ -1,0 +1,36 @@
+# Format:
+# destregions:
+#   region: Which region to shuffle (head/body/bunny)
+#     offsets: random: Choose random offsets from within the source region
+#              same:   Choose the same offset from within the source region
+#     sourcesprites: - List of sprite names to source from, or 'source' to only
+#                      use the input .zspr file or ROM, or 'all' to use all
+#                      sprites in the ./sprites/ folder
+#     multisource: simple: If multiple sprites are specified in sourcesprites,
+#                          pick one random sprite from sourcesprites and source
+#                          all offsets from that sprite
+#                  full:   If multiple sprites are specified in sourcesprites,
+#                          source each offset from a different random sprite.
+#     sourceregions: - List of regions to include in the pool to shuffle into
+#                      this destination region.  Defaults to the same region as
+#                      the destination.
+
+destregions:
+  head:
+    offsets: random
+    sourcesprites: - all
+    spritepool: multisimple #multifull, source
+    sourceregions:
+      - head
+      - body
+  body:
+    offsets: same
+    sourcesprites: 
+      - Celes
+      - Link
+      - Zelda
+    spritepool: single
+  bunny:
+    offsets: same
+    sourcesprites: - Mog
+

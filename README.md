@@ -68,3 +68,6 @@ DETAILED OPTIONS:
     destination sprite 2x2 tile is shuffled from a random 2x2 tile within a
     random .zspr spritesheet.  Combine with --chaos for maximum nonsense.
 
+12) **--make_shadow_edge_visible**: Clears body pixels that overlap with the
+    edge of the shadow in up/right/down stand/swordprimed poses, which helps
+    the generated sprite not interfere with glitches and bomb jumps.

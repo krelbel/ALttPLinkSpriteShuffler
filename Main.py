@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 import shutil
 import struct
 
-__version__ = '0.4'
+__version__ = '0.5'
 
 # Shuffles all of the head, body, and/or bunny sprites in Link's spritesheet in
 # any randomizer or ALttP JP 1.0 ROM
@@ -79,6 +79,10 @@ __version__ = '0.4'
 # 11) **--multisprite_full**: Same as --multisprite_simple, except each
 #     destination sprite 2x2 tile is shuffled from a random 2x2 tile within a
 #     random .zspr spritesheet.  Combine with --chaos for maximum nonsense.
+#
+# 12) **--make_shadow_edge_visible**: Clears body pixels that overlap with the
+#     edge of the shadow in up/right/down stand/swordprimed poses, which helps
+#     the generated sprite not interfere with glitches and bomb jumps.
 
 # General rom patching logic copied from https://github.com/LLCoolDave/ALttPEntranceRandomizer
 

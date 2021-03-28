@@ -132,7 +132,9 @@ body_offsets = [
 16*21+0, 16*21+1, 16*21+2, 16*21+3, 16*21+4, 16*21+5, 16*21+6,          # V0-6
 16*23+2, 16*23+3, 16*23+4, 16*23+5, 16*23+6, 16*23+7,                   # X2-7
 16*24+0, 16*24+1, 16*24+2, 16*24+3, 16*24+4, 16*24+5,                   # Y0-5
-16*25+4]                                                                # Z4
+16*25+4,                                                                # Z4
+16*26+7,                                                                # AA7
+16*27+0, 16*27+1, 16*27+2, 16*27+3, 16*27+4]                            # AB0-4
 
 bunny_offsets = [
 16*25+5, 16*25+7,                                              # Z5, Z7
@@ -335,6 +337,91 @@ def shuffle_bunny(args, sprite, palette, spritelist):
     for b in range(30):
         write_byte(palette, dstpaletteoffset+b, srcsheet[srcpaletteoffset+b])
 
+# Remove body pixels that overlap with the edge of the shadow
+def make_shadow_edge_visible(sprite):
+
+    # 4bpp SNES encoding:
+    # [r0, bp1], [r0, bp2], [r1, bp1], [r1, bp2], [r2, bp1], [r2, bp2], [r3, bp1], [r3, bp2]
+    # [r4, bp1], [r4, bp2], [r5, bp1], [r5, bp2], [r6, bp1], [r6, bp2], [r7, bp1], [r7, bp2]
+    # [r0, bp3], [r0, bp4], [r1, bp3], [r1, bp4], [r2, bp3], [r2, bp4], [r3, bp3], [r3, bp4]
+    # [r4, bp3], [r4, bp4], [r5, bp3], [r5, bp4], [r6, bp3], [r6, bp4], [r7, bp3], [r7, bp4]
+    #
+    # Shadow outline pixels for up/down poses:
+    #
+    #   01234567 01234567
+    # 0 00000000 00000000
+    # 1 00000000 00000000
+    # 2 00000000 00000000
+    # 3 00100000 00000100
+    # 4 00100000 00000100
+    # 5 00011000 00011000
+    # 6 00000111 11100000
+    # 7 00000000 00000000
+    #
+    # Masks to clear sprite pixels overlapping these shadow outline pixels
+    # (and pixels outside them) in 4bpp:
+
+    left_shadow_updown = [
+        0,0,        0,0,        0,0,        0xe0,0xe0,
+        0xe0,0xe0,  0xf8,0xf8,  0xff,0xff,  0xff,0xff,
+        0,0,        0,0,        0,0,        0xe0,0xe0,
+        0xe0,0xe0,  0xf8,0xf8,  0xff,0xff,  0xff,0xff]
+    right_shadow_updown = [
+        0,0,        0,0,        0,0,        0x7,0x7,
+        0x7,0x7,    0x1f,0x1f,  0xff,0xff,  0xff,0xff,
+        0,0,        0,0,        0,0,        0x7,0x7,
+        0x7,0x7,    0x1f,0x1f,  0xff,0xff,  0xff,0xff]
+
+    # Shadow outline pixels for left/right poses (since the sprite is rendered
+    # at a different offset with respect to the shadow compared to up/down
+    # sprites, the pixels we remove from the sprite need to be offset as well):
+    #
+    #   01234567 01234567
+    # 0 00000000 00000000
+    # 1 00000000 00000000
+    # 2 00000000 00000000
+    # 3 00000000 00000000
+    # 4 00010000 00000010
+    # 5 00010000 00000010
+    # 6 00001100 00001100
+    # 7 00000011 11110000
+
+    left_shadow_right = [
+        0,0,        0,0,        0,0,        0,0,
+        0xf0,0xf0,  0xf0,0xf0,  0xfc,0xfc,  0xff,0xff,
+        0,0,        0,0,        0,0,        0,0,
+        0xf0,0xf0,  0xf0,0xf0,  0xfc,0xfc,  0xff,0xff]
+    right_shadow_right = [
+        0,0,        0,0,        0,0,        0,0,
+        0x2,0x2,    0x2,0x2,    0xf,0xf,    0xff,0xff,
+        0,0,        0,0,        0,0,        0,0,
+        0x2,0x2,    0x2,0x2,    0xf,0xf,    0xff,0xff]
+
+    updown_shadow_offsets = [
+        16*1+3,  # B3 stand down
+        16*2+1,  # C1 stand up
+        16*12+0, # M0 sword primed down
+        16*12+3] # M3 sword primed up
+
+    right_shadow_offsets = [
+        16*1+0,  # B0 stand right.  this flickers the walk cycle...
+        16*12+6] # M6 sword primed right
+
+    for off in updown_shadow_offsets:
+        base = off * 0x40 + 0x200 # shadow's in the bottom 2 tiles
+        for w in range(32):
+            write_byte(sprite, base+w, (sprite[base+w] & (~(left_shadow_updown[w]))))
+        for w in range(32):
+            write_byte(sprite, base+32+w, (sprite[base+32+w] & (~(right_shadow_updown[w]))))
+
+    for off in right_shadow_offsets:
+        base = off * 0x40 + 0x200 # shadow's in the bottom 2 tiles
+        for w in range(32):
+            write_byte(sprite, base+w, (sprite[base+w] & (~(left_shadow_right[w]))))
+        for w in range(32):
+            write_byte(sprite, base+32+w, (sprite[base+32+w] & (~(right_shadow_right[w]))))
+        
+
 def open_rom(srcfile):
     rom = bytearray(open(srcfile, 'rb').read())
     basesprite = rom[0x80000:0x87000]
@@ -428,6 +515,9 @@ def shuffle_sprite(args):
     if (args.multibunny):
         shuffle_bunny(args, basesprite, basepalette, spritelist)
 
+    if (args.make_shadow_edge_visible):
+        make_shadow_edge_visible(basesprite)
+
     if (args.zspr_out):
         dump_zspr(basesprite, basepalette, baseglove, outfilename)
     else:
@@ -511,6 +601,7 @@ if __name__ == '__main__':
     parser.add_argument('--multibunny', help='Pick a random bunny sprite from all bunny sprites in ./sprites/ instead of the bunny sprite in the base spritesheet.', action='store_true')
     parser.add_argument('--multisprite_simple', help='Choose each sprite randomly from all spritesheets in ./sprites/ as sources, instead of the current spritesheet in the provided rom. Keep poses unshuffled (i.e. each sprite will be sourced from the same position in a random sprite).', action='store_true')
     parser.add_argument('--multisprite_full', help='Choose each sprite randomly from all spritesheets in ./sprites/ as sources, instead of the current spritesheet in the provided rom. Shuffle poses according to other args (i.e. each sprite will be sourced from a random position in a random spritesheet according to the other --head/--body/--chaos arguments).', action='store_true')
+    parser.add_argument('--make_shadow_edge_visible', help='Clear body pixels that overlap with the edge of the shadow in up/right/down stand/swordprimed poses, which helps the generated sprite not interfere with glitches/bombjumps', action='store_true')
     args = parser.parse_args()
 
     if not args.dumpsprites:
